@@ -1,0 +1,50 @@
+name: slack-approval-gate
+description: Gate a GitHub Actions workflow on Slack approval. Threaded or standalone.
+author: a.remniov
+runs:
+  using: node20
+  main: dist/index.js
+branding:
+  icon: check-circle
+  color: orange
+
+inputs:
+  channel-id:
+    description: Slack channel ID. Falls back to env SLACK_CHANNEL_ID.
+    required: false
+  base-message-ts:
+    description: If set, run in threaded mode under this message. No main message is posted or updated.
+    required: false
+  base-message-payload:
+    description: Standalone mode only. JSON payload for the main message. Defaults to a GitHub-context block.
+    required: false
+    default: "{}"
+  approvers:
+    description: Comma-separated Slack user IDs allowed to approve.
+    required: true
+  minimum-approval-count:
+    description: Number of approvals required.
+    required: false
+    default: "1"
+  success-message-payload:
+    description: JSON payload that replaces the approval reply on full approval.
+    required: false
+    default: "{}"
+  fail-message-payload:
+    description: JSON payload that replaces the approval reply on reject/cancel/timeout.
+    required: false
+    default: "{}"
+  timeout-minutes:
+    description: Approval timeout. Action fails after this many minutes.
+    required: false
+    default: "30"
+
+outputs:
+  main-message-ts:
+    description: Timestamp of the main message (input ts in threaded mode).
+  approval-message-ts:
+    description: Timestamp of the approval thread reply.
+  result:
+    description: One of approved, rejected, canceled, timed-out.
+  approvers-json:
+    description: JSON array of Slack user IDs who approved.

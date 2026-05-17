@@ -1,5 +1,5 @@
 {
-  "name": "slack-approval-gate-action",
+  "name": "slack-approval-gate",
   "version": "0.1.0",
   "description": "Gate a GitHub Actions workflow on Slack approval (threaded or standalone).",
   "main": "dist/index.js",
@@ -14,6 +14,7 @@
   "dependencies": {
     "@actions/core": "^1.10.1",
     "@slack/bolt": "^4.0.1",
+    "@slack/types": "^2.21.1",
     "@slack/web-api": "^7.7.0"
   },
   "devDependencies": {
