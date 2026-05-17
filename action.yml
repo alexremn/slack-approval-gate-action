@@ -1,8 +1,8 @@
 name: slack-approval-gate
 description: Gate a GitHub Actions workflow on Slack approval. Threaded or standalone.
-author: a.remniov
+author: Aleksandr Remniov <alexremn>
 runs:
-  using: node20
+  using: node24
   main: dist/index.js
 branding:
   icon: check-circle
