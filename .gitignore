@@ -1,0 +1,12 @@
+CLAUDE.md
+AGENTS.md
+RTK.md
+.rtk
+.claude
+
+docs/superpowers
+
+node_modules/
+build/
+*.log
+.DS_Store
