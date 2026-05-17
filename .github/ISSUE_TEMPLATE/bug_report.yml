@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a bug in slack-approval-gate
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out the sections below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and expected behavior.
+      placeholder: When the workflow runs, ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: How can we reproduce this?
+      placeholder: |
+        1. Workflow config: ...
+        2. Triggered by ...
+        3. Observed: ...
+    validations:
+      required: true
+  - type: textarea
+    id: workflow-snippet
+    attributes:
+      label: Workflow snippet
+      description: The relevant `uses:` step that invokes this action (redact secrets).
+      render: yaml
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Action logs
+      description: Paste relevant Action run logs (redact secrets).
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Action version
+      description: Which version/tag are you using? (e.g. `v1`, `v1.2.3`)
+      placeholder: v1
+    validations:
+      required: true
+  - type: input
+    id: runner
+    attributes:
+      label: Runner OS
+      placeholder: ubuntu-latest
+    validations:
+      required: false
