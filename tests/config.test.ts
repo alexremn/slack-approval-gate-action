@@ -1,6 +1,10 @@
 import { loadConfig } from "../src/config";
 
 const INPUT_PREFIX = "INPUT_";
+const APPROVER_A = "U01ABCDEF12";
+const APPROVER_B = "U02ABCDEF34";
+const APPROVER_C = "U03ABCDEF56";
+const CHANNEL = "C0123ABCDE";
 
 function setInput(name: string, value: string): void {
   process.env[`${INPUT_PREFIX}${name.toUpperCase()}`] = value;
@@ -20,7 +24,7 @@ describe("loadConfig", () => {
     process.env.SLACK_BOT_TOKEN = "xoxb-test";
     process.env.SLACK_APP_TOKEN = "xapp-test";
     process.env.SLACK_SIGNING_SECRET = "secret";
-    process.env.SLACK_CHANNEL_ID = "C123";
+    process.env.SLACK_CHANNEL_ID = CHANNEL;
   });
 
   afterAll(() => {
@@ -28,24 +32,37 @@ describe("loadConfig", () => {
   });
 
   it("loads minimal valid config", () => {
-    setInput("approvers", "u1,u2");
+    setInput("approvers", `${APPROVER_A},${APPROVER_B}`);
     const c = loadConfig();
-    expect(c.approvers).toEqual(["u1", "u2"]);
+    expect(c.approvers).toEqual([APPROVER_A, APPROVER_B]);
     expect(c.minimumApprovalCount).toBe(1);
+    expect(c.minimumRejectCount).toBe(1);
+    expect(c.preventSelfApproval).toBe(false);
     expect(c.baseMessageTs).toBeNull();
-    expect(c.channelId).toBe("C123");
+    expect(c.channelId).toBe(CHANNEL);
     expect(c.timeoutMs).toBe(30 * 60_000);
   });
 
   it("uses channel-id input over env", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("channel-id", "C9999ABCDE");
+    expect(loadConfig().channelId).toBe("C9999ABCDE");
+  });
+
+  it("rejects malformed channel-id", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("channel-id", "#release");
+    expect(() => loadConfig()).toThrow(/channel-id .* not a valid/);
+  });
+
+  it("rejects malformed approver id", () => {
     setInput("approvers", "u1");
-    setInput("channel-id", "C999");
-    expect(loadConfig().channelId).toBe("C999");
+    expect(() => loadConfig()).toThrow(/approvers entry "u1" is not a valid/);
   });
 
   it("normalizes approvers (trim, dedupe, drop empty)", () => {
-    setInput("approvers", " u1 , u2,, u1 ,u3 ");
-    expect(loadConfig().approvers).toEqual(["u1", "u2", "u3"]);
+    setInput("approvers", ` ${APPROVER_A} , ${APPROVER_B},, ${APPROVER_A} ,${APPROVER_C} `);
+    expect(loadConfig().approvers).toEqual([APPROVER_A, APPROVER_B, APPROVER_C]);
   });
 
   it("throws when approvers list is empty after normalization", () => {
@@ -54,19 +71,43 @@ describe("loadConfig", () => {
   });
 
   it("throws when minimum-approval-count exceeds approvers length", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     setInput("minimum-approval-count", "2");
     expect(() => loadConfig()).toThrow(/exceeds approvers count/);
   });
 
-  it("treats 0 minimum-approval-count as default 1", () => {
-    setInput("approvers", "u1");
+  it("rejects 0 minimum-approval-count as invalid", () => {
+    setInput("approvers", APPROVER_A);
     setInput("minimum-approval-count", "0");
-    expect(loadConfig().minimumApprovalCount).toBe(1);
+    expect(() => loadConfig()).toThrow(/positive integer/);
+  });
+
+  it("rejects non-integer minimum-approval-count", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("minimum-approval-count", "1.5");
+    expect(() => loadConfig()).toThrow(/positive integer/);
+  });
+
+  it("rejects 0 timeout-minutes as invalid", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("timeout-minutes", "0");
+    expect(() => loadConfig()).toThrow(/positive integer/);
+  });
+
+  it("accepts custom minimum-reject-count", () => {
+    setInput("approvers", `${APPROVER_A},${APPROVER_B}`);
+    setInput("minimum-reject-count", "2");
+    expect(loadConfig().minimumRejectCount).toBe(2);
+  });
+
+  it("rejects minimum-reject-count > approvers", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("minimum-reject-count", "2");
+    expect(() => loadConfig()).toThrow(/exceeds approvers count/);
   });
 
   it("parses multiline JSON payloads correctly", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     setInput(
       "base-message-payload",
       '{\n  "text": "hello\\nworld",\n  "blocks": []\n}',
@@ -76,19 +117,25 @@ describe("loadConfig", () => {
   });
 
   it("throws on invalid JSON payload", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     setInput("base-message-payload", "{not json");
     expect(() => loadConfig()).toThrow(/base-message-payload.*not valid JSON/);
   });
 
+  it("throws when JSON payload is not an object", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("base-message-payload", "[1,2,3]");
+    expect(() => loadConfig()).toThrow(/must be a JSON object/);
+  });
+
   it("treats base-message-ts as enabling threaded mode", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     setInput("base-message-ts", "1700000000.000100");
     expect(loadConfig().baseMessageTs).toBe("1700000000.000100");
   });
 
   it("warns when base-message-ts and base-message-payload both set", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     setInput("base-message-ts", "1700000000.000100");
     setInput("base-message-payload", '{"text":"hi"}');
     const writes: string[] = [];
@@ -99,20 +146,48 @@ describe("loadConfig", () => {
   });
 
   it("throws when SLACK_BOT_TOKEN missing", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     delete process.env.SLACK_BOT_TOKEN;
     expect(() => loadConfig()).toThrow(/SLACK_BOT_TOKEN/);
   });
 
+  it("throws when SLACK_BOT_TOKEN has wrong prefix", () => {
+    setInput("approvers", APPROVER_A);
+    process.env.SLACK_BOT_TOKEN = "xoxp-not-a-bot";
+    expect(() => loadConfig()).toThrow(/xoxb-/);
+  });
+
+  it("throws when SLACK_APP_TOKEN has wrong prefix", () => {
+    setInput("approvers", APPROVER_A);
+    process.env.SLACK_APP_TOKEN = "xoxb-not-an-app-token";
+    expect(() => loadConfig()).toThrow(/xapp-/);
+  });
+
   it("does not throw when SLACK_SIGNING_SECRET is missing (socket mode)", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     delete process.env.SLACK_SIGNING_SECRET;
     expect(() => loadConfig()).not.toThrow();
   });
 
   it("throws when channel id missing in both input and env", () => {
-    setInput("approvers", "u1");
+    setInput("approvers", APPROVER_A);
     delete process.env.SLACK_CHANNEL_ID;
     expect(() => loadConfig()).toThrow(/channel-id/);
+  });
+
+  it("parses prevent-self-approval and self-approval-slack-id", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("prevent-self-approval", "true");
+    setInput("self-approval-slack-id", APPROVER_B);
+    const c = loadConfig();
+    expect(c.preventSelfApproval).toBe(true);
+    expect(c.selfApprovalSlackId).toBe(APPROVER_B);
+  });
+
+  it("rejects malformed self-approval-slack-id", () => {
+    setInput("approvers", APPROVER_A);
+    setInput("prevent-self-approval", "true");
+    setInput("self-approval-slack-id", "not-a-user");
+    expect(() => loadConfig()).toThrow(/self-approval-slack-id/);
   });
 });

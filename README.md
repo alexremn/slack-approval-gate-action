@@ -45,14 +45,17 @@ Create a Slack App in your workspace with this manifest:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `channel-id` | no | env `SLACK_CHANNEL_ID` | Slack channel ID. |
+| `channel-id` | no | env `SLACK_CHANNEL_ID` | Slack channel ID. Must match `^[CGD][A-Z0-9]{6,}$`. |
 | `base-message-ts` | no | — | Enables threaded mode. |
-| `base-message-payload` | no | `{}` (uses built-in GH-context block when empty) | Standalone-mode main message JSON. |
-| `approvers` | yes | — | Comma-separated Slack user IDs. |
-| `minimum-approval-count` | no | `1` | Approvals needed. |
+| `base-message-payload` | no | `{}` (uses built-in GH-context block when empty) | Standalone-mode main message JSON. Must be a JSON object. |
+| `approvers` | yes | — | Comma-separated Slack user IDs (`U…`/`W…`). |
+| `minimum-approval-count` | no | `1` | Approvals needed. Must be a positive integer and `≤ approvers.length`. |
+| `minimum-reject-count` | no | `1` | Rejections needed. Must be a positive integer and `≤ approvers.length`. |
+| `prevent-self-approval` | no | `false` | If `true`, the workflow's triggering actor cannot approve. Requires `self-approval-slack-id`. |
+| `self-approval-slack-id` | no | — | Slack user id of the triggering actor (mapping is the caller's responsibility). |
 | `success-message-payload` | no | rendered block | Replaces approval reply on full approval. |
 | `fail-message-payload` | no | rendered block | Replaces approval reply on reject/cancel/timeout. |
-| `timeout-minutes` | no | `30` | Internal timeout. |
+| `timeout-minutes` | no | `30` | Action-level approval timeout. **Independent of step-level `timeout-minutes:`** — whichever fires first wins. Always pass this with `with:` rather than relying on the step-level setting. |
 
 ## Outputs
 
@@ -62,6 +65,7 @@ Create a Slack App in your workspace with this manifest:
 | `approval-message-ts` | Approval reply ts. |
 | `result` | `approved`, `rejected`, `canceled`, or `timed-out`. |
 | `approvers-json` | JSON array of user IDs who approved. |
+| `approvals-json` | JSON array of `{user, ts}` records (`ts` = epoch milliseconds). |
 
 ## Usage
 
@@ -108,8 +112,27 @@ jobs:
 ## Behavior
 
 - Approve / reject buttons live on the approval reply.
-- Non-approver click → ephemeral "not authorized" reply to that user.
-- Double-approve click → ephemeral "already approved".
-- Reject by any user with button access fails the job.
-- SIGTERM/SIGINT/SIGBREAK → reply is updated with the cancel block, job fails.
-- Timeout → reply is updated with the timed-out block, job fails.
+- Non-approver click → ephemeral "not authorized" reply to that user (approve and reject both).
+- Double-approve / double-reject click → ephemeral "already approved/rejected".
+- Self-approval, when `prevent-self-approval=true` and the clicker's Slack id matches `self-approval-slack-id`, is blocked with an ephemeral reply.
+- Reject reaches terminal after `minimum-reject-count` rejections (default 1).
+- SIGTERM / SIGINT / SIGBREAK → reply updated with the cancel block, job exits with code 1 (`result=canceled`).
+- Timeout → reply updated with the timed-out block, job exits with code 1 (`result=timed-out`).
+- A late button press after the terminal outcome is dropped.
+- Slack API calls retry transient failures (HTTP 429 / 5xx / `ratelimited` / `ETIMEDOUT` / `ECONNRESET`) with jittered exponential backoff (up to 3 attempts).
+- `core.info` logs include each approve / reject event, threshold reached, and final outcome.
+
+### Timeout caveat
+
+`timeout-minutes` is the **action's own approval timer**. GitHub Actions' step-level `timeout-minutes:` is a separate killer of the whole step. They are independent — set them consistently:
+
+```yaml
+- name: gate
+  uses: alexremn/slack-approval-gate@v1
+  timeout-minutes: 240           # GitHub step kill
+  with:
+    timeout-minutes: 240         # action's own approval timer
+    approvers: U12345,U67890
+```
+
+If you only set the step-level `timeout-minutes:` the action will still default to 30 minutes internally and exit early as `timed-out`.

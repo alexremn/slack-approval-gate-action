@@ -20,6 +20,38 @@ describe("SlackClient", () => {
     expect(web.chat.postMessage).toHaveBeenCalledWith({ channel: "C1", text: "hi" });
   });
 
+  it("postMain injects fallback text when caller omits it", async () => {
+    const web = makeWeb();
+    web.chat.postMessage.mockResolvedValue({ ts: "1.0" });
+    const client = new SlackClient(web as any, "C1");
+    await client.postMain({ blocks: [{ type: "section" }] });
+    const call = web.chat.postMessage.mock.calls[0][0];
+    expect(call.text).toBe("Approval request");
+  });
+
+  it("postMain retries on transient 5xx", async () => {
+    const web = makeWeb();
+    const err: any = new Error("boom");
+    err.statusCode = 503;
+    web.chat.postMessage
+      .mockRejectedValueOnce(err)
+      .mockResolvedValueOnce({ ts: "9.9" });
+    const client = new SlackClient(web as any, "C1");
+    const ts = await client.postMain({ text: "hi" });
+    expect(ts).toBe("9.9");
+    expect(web.chat.postMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("postMain does not retry on 4xx", async () => {
+    const web = makeWeb();
+    const err: any = new Error("bad");
+    err.statusCode = 400;
+    web.chat.postMessage.mockRejectedValue(err);
+    const client = new SlackClient(web as any, "C1");
+    await expect(client.postMain({ text: "hi" })).rejects.toThrow(/bad/);
+    expect(web.chat.postMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("postMain throws when ts is missing", async () => {
     const web = makeWeb();
     web.chat.postMessage.mockResolvedValue({});

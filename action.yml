@@ -1,5 +1,7 @@
 name: slack-approval-gate
-description: Gate a GitHub Actions workflow on Slack approval. Threaded or standalone.
+description: |
+  Gate a GitHub Actions workflow on Slack approval (threaded or standalone).
+  Requires a Slack app with Socket Mode enabled and an App-Level token (xapp-).
 author: Aleksandr Remniov <alexremn>
 runs:
   using: node24
@@ -35,9 +37,27 @@ inputs:
     required: false
     default: "{}"
   timeout-minutes:
-    description: Approval timeout. Action fails after this many minutes.
+    description: |
+      Approval timeout. Action fails (outcome=timed-out) after this many minutes.
+      This is independent of the step-level `timeout-minutes:` in your workflow —
+      whichever fires first wins. Set both to the same value for clarity.
     required: false
     default: "30"
+  minimum-reject-count:
+    description: Number of rejections required before the action exits as rejected.
+    required: false
+    default: "1"
+  prevent-self-approval:
+    description: |
+      If "true", the GitHub actor who triggered the run cannot approve when their
+      Slack user id appears in `approvers`. Requires explicit Slack id mapping via
+      `self-approval-slack-id` input.
+    required: false
+    default: "false"
+  self-approval-slack-id:
+    description: Slack user id of the GitHub actor (for prevent-self-approval check).
+    required: false
+    default: ""
 
 outputs:
   main-message-ts:
@@ -48,3 +68,7 @@ outputs:
     description: One of approved, rejected, canceled, timed-out.
   approvers-json:
     description: JSON array of Slack user IDs who approved.
+  approvals-json:
+    description: |
+      JSON array of approval records: [{"user":"U123","ts":1700000000000}, ...].
+      `ts` is epoch milliseconds at the moment of approval.

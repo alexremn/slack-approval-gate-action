@@ -47,8 +47,51 @@ describe("ApprovalState", () => {
     expect(s.getApprovers().sort()).toEqual(["u1", "u2", "u3"]);
   });
 
-  it("exposes minimumCount", () => {
+  it("records approval timestamps", async () => {
     const s = new ApprovalState(["u1"], 1);
+    const before = Date.now();
+    await s.tryApprove("u1");
+    const records = s.getApprovalRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0].user).toBe("u1");
+    expect(records[0].ts).toBeGreaterThanOrEqual(before);
+    expect(records[0].ts).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("rejects: single reject completes when minimumRejects=1", async () => {
+    const s = new ApprovalState(["u1", "u2"], 2);
+    await expect(s.tryReject("u1")).resolves.toBe("rejected");
+    expect(s.getRejecters()).toEqual(["u1"]);
+  });
+
+  it("rejects: returns remaining until minimumRejects met", async () => {
+    const s = new ApprovalState(["u1", "u2", "u3"], 3, 2);
+    await expect(s.tryReject("u1")).resolves.toBe("remaining");
+    await expect(s.tryReject("u2")).resolves.toBe("rejected");
+  });
+
+  it("rejects: unknown user is not-authorized", async () => {
+    const s = new ApprovalState(["u1"], 1);
+    await expect(s.tryReject("intruder")).resolves.toBe("not-authorized");
+  });
+
+  it("rejects: double reject is already-rejected", async () => {
+    const s = new ApprovalState(["u1"], 1, 2);
+    await s.tryReject("u1");
+    await expect(s.tryReject("u1")).resolves.toBe("already-rejected");
+  });
+
+  it("mutex survives a callback that returns a falsy value", async () => {
+    const s = new ApprovalState(["u1"], 1);
+    const r1 = s.tryApprove("u1");
+    const r2 = s.tryApprove("u1");
+    await expect(r1).resolves.toBe("approved");
+    await expect(r2).resolves.toBe("already-approved");
+  });
+
+  it("exposes minimumCount and minimumRejectCount", () => {
+    const s = new ApprovalState(["u1"], 1, 3);
     expect(s.minimumCount).toBe(1);
+    expect(s.minimumRejectCount).toBe(3);
   });
 });

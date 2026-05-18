@@ -12,6 +12,10 @@ export function hasPayload(p: MessagePayload | Record<string, unknown> | undefin
   return false;
 }
 
+export function escapeMrkdwn(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export interface GithubContext {
   serverUrl: string;
   repo: string;
@@ -46,21 +50,21 @@ export function defaultMainPayload(ctx: GithubContext): MessagePayload {
   const attemptSuffix =
     ctx.runAttempt && ctx.runAttempt !== "1" ? ` (attempt ${ctx.runAttempt})` : "";
   const workflowLabel = ctx.runNumber
-    ? `${ctx.workflow} #${ctx.runNumber}${attemptSuffix}`
-    : ctx.workflow;
+    ? `${escapeMrkdwn(ctx.workflow)} #${ctx.runNumber}${attemptSuffix}`
+    : escapeMrkdwn(ctx.workflow);
 
   const fields: Array<{ type: "mrkdwn"; text: string }> = [
-    { type: "mrkdwn", text: `*Repository*\n<${repoUrl}|${ctx.repo}>` },
+    { type: "mrkdwn", text: `*Repository*\n<${repoUrl}|${escapeMrkdwn(ctx.repo)}>` },
     { type: "mrkdwn", text: `*Workflow*\n<${runUrl}|${workflowLabel}>` },
     {
       type: "mrkdwn",
-      text: `*Triggered by*\n<${ctx.serverUrl}/${ctx.actor}|${ctx.actor}>`,
+      text: `*Triggered by*\n<${ctx.serverUrl}/${ctx.actor}|${escapeMrkdwn(ctx.actor)}>`,
     },
   ];
   if (ctx.refName) {
     fields.push({
       type: "mrkdwn",
-      text: `*Branch*\n<${repoUrl}/tree/${ctx.refName}|${ctx.refName}>`,
+      text: `*Branch*\n<${repoUrl}/tree/${ctx.refName}|${escapeMrkdwn(ctx.refName)}>`,
     });
   }
   if (ctx.sha) {
@@ -76,7 +80,7 @@ export function defaultMainPayload(ctx: GithubContext): MessagePayload {
     blocks: [
       {
         type: "header",
-        text: { type: "plain_text", text: ":lock: Approval required", emoji: true },
+        text: { type: "plain_text", text: "🔒 Approval required", emoji: true },
       },
       {
         type: "section",
@@ -95,23 +99,25 @@ export interface ApprovalReplyState {
 }
 
 export function renderApprovalReply(state: ApprovalReplyState): unknown[] {
-  const remainingText =
+  const stillNeeded = Math.max(0, state.minimumCount - state.approved.length);
+  const eligibleText =
     state.remaining.length > 0
       ? state.remaining.map(v => `<@${v}>`).join(", ")
       : "(none)";
-  const approvedLine =
-    state.approved.length > 0
-      ? `Approvers: ${state.approved.map(v => `<@${v}>`).join(", ")}\n`
-      : "\n";
+  const lines = [
+    `*Required approvals:* ${state.minimumCount}`,
+    `*Still needed:* ${stillNeeded}`,
+    `*Eligible approvers:* ${eligibleText}`,
+  ];
+  if (state.approved.length > 0) {
+    lines.push(`*Approved by:* ${state.approved.map(v => `<@${v}>`).join(", ")}`);
+  }
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text:
-          `*Required Approvers Count:* ${state.minimumCount}\n` +
-          `*Remaining Approvers:* ${remainingText}\n` +
-          approvedLine,
+        text: lines.join("\n"),
       },
     },
     {

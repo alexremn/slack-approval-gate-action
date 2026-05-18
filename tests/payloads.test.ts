@@ -4,6 +4,7 @@ import {
   defaultMainPayload,
   renderApprovalReply,
   renderFinalStatus,
+  escapeMrkdwn,
 } from "../src/payloads";
 
 describe("hasPayload", () => {
@@ -102,6 +103,22 @@ describe("defaultMainPayload", () => {
     expect(fields.some(f => f.text.includes("ci #7 (attempt 2)"))).toBe(true);
   });
 
+  it("escapes mrkdwn-significant chars in actor and branch", () => {
+    const p = defaultMainPayload({
+      ...baseCtx,
+      actor: "bot<dev>",
+      refName: "feature/<x>",
+    });
+    const text = JSON.stringify(p.blocks);
+    expect(text).toContain("bot&lt;dev&gt;");
+    expect(text).toContain("feature/&lt;x&gt;");
+  });
+
+  it("uses a Unicode header so all Slack clients render it", () => {
+    const p = defaultMainPayload(baseCtx);
+    expect((p.blocks![0] as any).text.text).toContain("🔒");
+  });
+
   it("omits branch and commit fields when env missing", () => {
     const p = defaultMainPayload({ ...baseCtx, refName: "", sha: "" });
     const fields = (p.blocks![1] as any).fields as Array<{ text: string }>;
@@ -121,7 +138,8 @@ describe("renderApprovalReply", () => {
     });
     expect(blocks).toHaveLength(2);
     expect((blocks[0] as any).type).toBe("section");
-    expect((blocks[0] as any).text.text).toContain("Required Approvers Count:* 2");
+    expect((blocks[0] as any).text.text).toContain("Required approvals:* 2");
+    expect((blocks[0] as any).text.text).toContain("Still needed:* 2");
     expect((blocks[0] as any).text.text).toContain("<@u1>");
     const actions = blocks[1] as any;
     expect(actions.type).toBe("actions");
@@ -131,7 +149,7 @@ describe("renderApprovalReply", () => {
     expect(actions.elements[1].action_id).toBe("slack-approval-reject");
   });
 
-  it("shows current approvers when present", () => {
+  it("shows current approvers and decremented still-needed", () => {
     const blocks = renderApprovalReply({
       minimumCount: 2,
       remaining: ["u2"],
@@ -139,7 +157,15 @@ describe("renderApprovalReply", () => {
       approveActionId: "a",
       rejectActionId: "r",
     });
-    expect((blocks[0] as any).text.text).toContain("Approvers: <@u1>");
+    const text = (blocks[0] as any).text.text;
+    expect(text).toContain("Still needed:* 1");
+    expect(text).toContain("Approved by:* <@u1>");
+  });
+});
+
+describe("escapeMrkdwn", () => {
+  it("escapes &, <, >", () => {
+    expect(escapeMrkdwn("a&b<c>d")).toBe("a&amp;b&lt;c&gt;d");
   });
 });
 

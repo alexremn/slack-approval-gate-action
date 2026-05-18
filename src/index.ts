@@ -16,6 +16,18 @@ import { SlackClient } from "./slack-client";
 import { mintActionId } from "./action-id";
 import { registerHandlers } from "./handlers";
 
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let to: NodeJS.Timeout | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    to = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (to) clearTimeout(to);
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const ghCtx = readGithubContext();
@@ -36,7 +48,11 @@ async function main(): Promise<void> {
     mainMessageTs = await slack.postMain(payload);
   }
 
-  const state = new ApprovalState(config.approvers, config.minimumApprovalCount);
+  const state = new ApprovalState(
+    config.approvers,
+    config.minimumApprovalCount,
+    config.minimumRejectCount,
+  );
   const initialBlocks = renderApprovalReply({
     minimumCount: state.minimumCount,
     remaining: state.getRemaining(),
@@ -61,16 +77,19 @@ async function main(): Promise<void> {
   });
 
   let shuttingDown = false;
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
   const shutdown = async (
     outcome: Outcome,
     code: number,
   ): Promise<void> => {
-    if (shuttingDown) return;
-    shuttingDown = true;
     core.setOutput("result", outcome);
     core.setOutput("approvers-json", JSON.stringify(state.getApprovers()));
+    core.setOutput("approvals-json", JSON.stringify(state.getApprovalRecords()));
+    core.info(`Outcome: ${outcome}`);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
     try {
-      await app.stop();
+      await withTimeout(app.stop(), 5000, "Bolt app.stop");
     } catch (e) {
       core.warning(`Bolt stop failed: ${(e as Error).message}`);
     }
@@ -86,7 +105,11 @@ async function main(): Promise<void> {
     rejectActionId,
     successPayload: config.successMessagePayload as MessagePayload,
     failPayload: config.failMessagePayload as MessagePayload,
+    preventSelfApproval: config.preventSelfApproval,
+    selfApprovalSlackId: config.selfApprovalSlackId,
     onTerminal: async (outcome) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       const code = outcome === "approved" ? 0 : 1;
       await shutdown(outcome, code);
     },
@@ -94,6 +117,7 @@ async function main(): Promise<void> {
 
   const onCancel = async (): Promise<void> => {
     if (shuttingDown) return;
+    shuttingDown = true;
     try {
       const payload = hasPayload(config.failMessagePayload)
         ? (config.failMessagePayload as MessagePayload)
@@ -108,8 +132,9 @@ async function main(): Promise<void> {
   process.on("SIGINT", onCancel);
   process.on("SIGBREAK" as NodeJS.Signals, onCancel);
 
-  const timeoutHandle = setTimeout(async () => {
+  timeoutHandle = setTimeout(async () => {
     if (shuttingDown) return;
+    shuttingDown = true;
     try {
       const payload = hasPayload(config.failMessagePayload)
         ? (config.failMessagePayload as MessagePayload)
@@ -122,7 +147,24 @@ async function main(): Promise<void> {
   }, config.timeoutMs);
   timeoutHandle.unref?.();
 
-  await app.start();
+  try {
+    await app.start();
+  } catch (e) {
+    core.error(`Bolt app.start failed: ${(e as Error).message}`);
+    if (!shuttingDown) {
+      shuttingDown = true;
+      try {
+        await slack.updateApprovalReply(approvalMessageTs, {
+          blocks: renderFinalStatus("canceled", state.getApprovers()),
+          text: "Approval listener failed to start; run canceled.",
+        });
+      } catch (updErr) {
+        core.warning(`Cleanup update failed: ${(updErr as Error).message}`);
+      }
+      await shutdown("canceled", 1);
+    }
+    return;
+  }
   core.info("Waiting for approval...");
 }
 

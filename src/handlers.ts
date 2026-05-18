@@ -1,3 +1,4 @@
+import * as core from "@actions/core";
 import type { App } from "@slack/bolt";
 import type { ApprovalState } from "./approval-state";
 import type { SlackClient } from "./slack-client";
@@ -19,6 +20,8 @@ export interface HandlersDeps {
   rejectActionId: string;
   successPayload: MessagePayload;
   failPayload: MessagePayload;
+  preventSelfApproval?: boolean;
+  selfApprovalSlackId?: string;
   onTerminal: (outcome: Outcome, rejectedBy?: string) => Promise<void>;
 }
 
@@ -46,18 +49,34 @@ export function registerHandlers(deps: HandlersDeps): void {
     rejectActionId,
     successPayload,
     failPayload,
+    preventSelfApproval = false,
+    selfApprovalSlackId = "",
     onTerminal,
   } = deps;
 
+  let terminalFired = false;
+
   app.action("slack-approval-approve", async ({ ack, body, action, logger }) => {
     await ack();
+    if (terminalFired) return;
     if (action.type !== "button" || (action as { type: string; value?: string }).value !== approveActionId) return;
 
     const userId = (body as { user: { id: string } }).user.id;
 
     try {
+      if (preventSelfApproval && selfApprovalSlackId && userId === selfApprovalSlackId) {
+        await slack.postEphemeral(
+          userId,
+          "Self-approval is disabled for this run (you triggered the workflow).",
+          approvalMessageTs,
+        );
+        core.info(`Self-approval blocked for ${userId}`);
+        return;
+      }
+
       const result = await state.tryApprove(userId);
       if (result === "not-authorized") {
+        core.info(`Unauthorized approve attempt by ${userId}`);
         await slack.postEphemeral(
           userId,
           "You are not authorized to approve this request.",
@@ -74,14 +93,21 @@ export function registerHandlers(deps: HandlersDeps): void {
         return;
       }
       if (result === "remaining") {
-        await slack.updateApprovalReply(approvalMessageTs, {
-          blocks: renderApprovalReply(
-            buildReplyState(state, approveActionId, rejectActionId),
-          ),
-        });
+        core.info(`Approval recorded from ${userId}; ${state.getApprovers().length}/${state.minimumCount}`);
+        try {
+          await slack.updateApprovalReply(approvalMessageTs, {
+            blocks: renderApprovalReply(
+              buildReplyState(state, approveActionId, rejectActionId),
+            ),
+          });
+        } catch (e) {
+          logger.error(e as Error);
+        }
         return;
       }
       // result === "approved"
+      core.info(`Approval threshold reached; final approver ${userId}`);
+      terminalFired = true;
       const finalPayload = hasPayload(successPayload)
         ? successPayload
         : { blocks: renderFinalStatus("approved", state.getApprovers()) };
@@ -98,10 +124,45 @@ export function registerHandlers(deps: HandlersDeps): void {
 
   app.action("slack-approval-reject", async ({ ack, body, action, logger }) => {
     await ack();
+    if (terminalFired) return;
     if (action.type !== "button" || (action as { type: string; value?: string }).value !== rejectActionId) return;
 
     const userId = (body as { user: { id: string } }).user.id;
     try {
+      const result = await state.tryReject(userId);
+      if (result === "not-authorized") {
+        core.info(`Unauthorized reject attempt by ${userId}`);
+        await slack.postEphemeral(
+          userId,
+          "You are not authorized to reject this request.",
+          approvalMessageTs,
+        );
+        return;
+      }
+      if (result === "already-rejected") {
+        await slack.postEphemeral(
+          userId,
+          "You have already rejected this request.",
+          approvalMessageTs,
+        );
+        return;
+      }
+      if (result === "remaining") {
+        core.info(`Rejection recorded from ${userId}; ${state.getRejecters().length}/${state.minimumRejectCount}`);
+        try {
+          await slack.updateApprovalReply(approvalMessageTs, {
+            blocks: renderApprovalReply(
+              buildReplyState(state, approveActionId, rejectActionId),
+            ),
+          });
+        } catch (e) {
+          logger.error(e as Error);
+        }
+        return;
+      }
+      // result === "rejected"
+      core.info(`Rejection threshold reached; final rejecter ${userId}`);
+      terminalFired = true;
       const finalPayload = hasPayload(failPayload)
         ? failPayload
         : { blocks: renderFinalStatus("rejected", state.getApprovers(), userId) };

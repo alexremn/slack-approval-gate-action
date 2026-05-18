@@ -125,17 +125,81 @@ describe("registerHandlers", () => {
   it("reject: updates reply with default rejected block + terminal('rejected', userId)", async () => {
     const { app, deps, onTerminal } = makeDeps();
     registerHandlers(deps);
-    await app.actions["slack-approval-reject"](makeBoltArgs("u9", "reject-id"));
+    await app.actions["slack-approval-reject"](makeBoltArgs("u1", "reject-id"));
     expect((deps.slack as jest.Mocked<SlackClient>).updateApprovalReply).toHaveBeenCalled();
-    expect(onTerminal).toHaveBeenCalledWith("rejected", "u9");
+    expect(onTerminal).toHaveBeenCalledWith("rejected", "u1");
+  });
+
+  it("reject: unauthorized user gets ephemeral and no terminal", async () => {
+    const { app, deps, onTerminal } = makeDeps();
+    registerHandlers(deps);
+    await app.actions["slack-approval-reject"](makeBoltArgs("intruder", "reject-id"));
+    expect((deps.slack as jest.Mocked<SlackClient>).postEphemeral).toHaveBeenCalledWith(
+      "intruder",
+      expect.stringMatching(/not authorized/i),
+      "2.0",
+    );
+    expect(onTerminal).not.toHaveBeenCalled();
+  });
+
+  it("reject: quorum > 1 requires multiple rejects", async () => {
+    const { app, deps, onTerminal } = makeDeps({
+      state: new ApprovalState(["u1", "u2"], 2, 2),
+    });
+    registerHandlers(deps);
+    await app.actions["slack-approval-reject"](makeBoltArgs("u1", "reject-id"));
+    expect(onTerminal).not.toHaveBeenCalled();
+    await app.actions["slack-approval-reject"](makeBoltArgs("u2", "reject-id"));
+    expect(onTerminal).toHaveBeenCalledWith("rejected", "u2");
   });
 
   it("reject: custom failPayload is used", async () => {
     const { app, deps } = makeDeps({ failPayload: { text: "no" } });
     registerHandlers(deps);
-    await app.actions["slack-approval-reject"](makeBoltArgs("u9", "reject-id"));
+    await app.actions["slack-approval-reject"](makeBoltArgs("u1", "reject-id"));
     const upd = (deps.slack as jest.Mocked<SlackClient>).updateApprovalReply;
     expect(upd).toHaveBeenCalledWith("2.0", expect.objectContaining({ text: "no" }));
+  });
+
+  it("approve: self-approval blocked when configured", async () => {
+    const { app, deps, onTerminal } = makeDeps({
+      state: new ApprovalState(["u1"], 1),
+      preventSelfApproval: true,
+      selfApprovalSlackId: "u1",
+    });
+    registerHandlers(deps);
+    await app.actions["slack-approval-approve"](makeBoltArgs("u1", "approve-id"));
+    expect((deps.slack as jest.Mocked<SlackClient>).postEphemeral).toHaveBeenCalledWith(
+      "u1",
+      expect.stringMatching(/self-approval is disabled/i),
+      "2.0",
+    );
+    expect(onTerminal).not.toHaveBeenCalled();
+  });
+
+  it("approve: terminal update failure does not block onTerminal", async () => {
+    const { app, deps, onTerminal } = makeDeps({
+      state: new ApprovalState(["u1"], 1),
+    });
+    (deps.slack as jest.Mocked<SlackClient>).updateApprovalReply.mockRejectedValueOnce(
+      new Error("slack down"),
+    );
+    registerHandlers(deps);
+    await app.actions["slack-approval-approve"](makeBoltArgs("u1", "approve-id"));
+    expect(onTerminal).toHaveBeenCalledWith("approved");
+  });
+
+  it("approve: ignores second press after terminal", async () => {
+    const { app, deps, onTerminal } = makeDeps({
+      state: new ApprovalState(["u1", "u2"], 1),
+    });
+    registerHandlers(deps);
+    await app.actions["slack-approval-approve"](makeBoltArgs("u1", "approve-id"));
+    expect(onTerminal).toHaveBeenCalledTimes(1);
+    (deps.slack as jest.Mocked<SlackClient>).updateApprovalReply.mockClear();
+    await app.actions["slack-approval-approve"](makeBoltArgs("u2", "approve-id"));
+    expect((deps.slack as jest.Mocked<SlackClient>).updateApprovalReply).not.toHaveBeenCalled();
+    expect(onTerminal).toHaveBeenCalledTimes(1);
   });
 
   it("reject: action.value mismatch is ignored", async () => {
