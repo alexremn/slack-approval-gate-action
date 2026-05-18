@@ -85,7 +85,11 @@ export function registerHandlers(deps: HandlersDeps): void {
       const finalPayload = hasPayload(successPayload)
         ? successPayload
         : { blocks: renderFinalStatus("approved", state.getApprovers()) };
-      await slack.updateApprovalReply(approvalMessageTs, finalPayload);
+      try {
+        await slack.updateApprovalReply(approvalMessageTs, finalPayload);
+      } catch (e) {
+        logger.error(e as Error);
+      }
       await onTerminal("approved");
     } catch (e) {
       logger.error(e as Error);
@@ -101,7 +105,11 @@ export function registerHandlers(deps: HandlersDeps): void {
       const finalPayload = hasPayload(failPayload)
         ? failPayload
         : { blocks: renderFinalStatus("rejected", state.getApprovers(), userId) };
-      await slack.updateApprovalReply(approvalMessageTs, finalPayload);
+      try {
+        await slack.updateApprovalReply(approvalMessageTs, finalPayload);
+      } catch (e) {
+        logger.error(e as Error);
+      }
       await onTerminal("rejected", userId);
     } catch (e) {
       logger.error(e as Error);

@@ -21,6 +21,8 @@ export interface GithubContext {
   workflow: string;
   runnerOs: string;
   actor: string;
+  refName: string;
+  sha: string;
 }
 
 export function readGithubContext(): GithubContext {
@@ -33,27 +35,52 @@ export function readGithubContext(): GithubContext {
     workflow: process.env.GITHUB_WORKFLOW || "",
     runnerOs: process.env.RUNNER_OS || "",
     actor: process.env.GITHUB_ACTOR || "",
+    refName: process.env.GITHUB_REF_NAME || "",
+    sha: process.env.GITHUB_SHA || "",
   };
 }
 
 export function defaultMainPayload(ctx: GithubContext): MessagePayload {
-  const actionsUrl = `${ctx.serverUrl}/${ctx.repo}/actions/runs/${ctx.runId}`;
+  const repoUrl = `${ctx.serverUrl}/${ctx.repo}`;
+  const runUrl = `${repoUrl}/actions/runs/${ctx.runId}`;
+  const attemptSuffix =
+    ctx.runAttempt && ctx.runAttempt !== "1" ? ` (attempt ${ctx.runAttempt})` : "";
+  const workflowLabel = ctx.runNumber
+    ? `${ctx.workflow} #${ctx.runNumber}${attemptSuffix}`
+    : ctx.workflow;
+
+  const fields: Array<{ type: "mrkdwn"; text: string }> = [
+    { type: "mrkdwn", text: `*Repository*\n<${repoUrl}|${ctx.repo}>` },
+    { type: "mrkdwn", text: `*Workflow*\n<${runUrl}|${workflowLabel}>` },
+    {
+      type: "mrkdwn",
+      text: `*Triggered by*\n<${ctx.serverUrl}/${ctx.actor}|${ctx.actor}>`,
+    },
+  ];
+  if (ctx.refName) {
+    fields.push({
+      type: "mrkdwn",
+      text: `*Branch*\n<${repoUrl}/tree/${ctx.refName}|${ctx.refName}>`,
+    });
+  }
+  if (ctx.sha) {
+    const shortSha = ctx.sha.slice(0, 7);
+    fields.push({
+      type: "mrkdwn",
+      text: `*Commit*\n<${repoUrl}/commit/${ctx.sha}|${shortSha}>`,
+    });
+  }
+
   return {
+    text: `Approval required: ${ctx.workflow} in ${ctx.repo}`,
     blocks: [
       {
-        type: "section",
-        text: { type: "mrkdwn", text: "GitHub Actions Approval Request" },
+        type: "header",
+        text: { type: "plain_text", text: ":lock: Approval required", emoji: true },
       },
       {
         type: "section",
-        fields: [
-          { type: "mrkdwn", text: `*GitHub Actor:*\n${ctx.actor}` },
-          { type: "mrkdwn", text: `*Repos:*\n${ctx.serverUrl}/${ctx.repo}` },
-          { type: "mrkdwn", text: `*Actions URL:*\n${actionsUrl}` },
-          { type: "mrkdwn", text: `*GITHUB_RUN_ID:*\n${ctx.runId}` },
-          { type: "mrkdwn", text: `*Workflow:*\n${ctx.workflow}` },
-          { type: "mrkdwn", text: `*RunnerOS:*\n${ctx.runnerOs}` },
-        ],
+        fields,
       },
     ],
   };
