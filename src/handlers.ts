@@ -22,6 +22,8 @@ export interface HandlersDeps {
   failPayload: MessagePayload;
   preventSelfApproval?: boolean;
   selfApprovalSlackId?: string;
+  baseBlocks?: unknown[];
+  baseText?: string;
   onTerminal: (outcome: Outcome, rejectedBy?: string) => Promise<void>;
 }
 
@@ -51,8 +53,19 @@ export function registerHandlers(deps: HandlersDeps): void {
     failPayload,
     preventSelfApproval = false,
     selfApprovalSlackId = "",
+    baseBlocks = [],
+    baseText,
     onTerminal,
   } = deps;
+
+  const mergeUpdate = (status: MessagePayload): MessagePayload => {
+    if (baseBlocks.length === 0) return status;
+    const statusBlocks = Array.isArray(status.blocks) ? status.blocks : [];
+    return {
+      text: status.text ?? baseText,
+      blocks: [...baseBlocks, ...statusBlocks],
+    };
+  };
 
   let terminalFired = false;
 
@@ -95,11 +108,14 @@ export function registerHandlers(deps: HandlersDeps): void {
       if (result === "remaining") {
         core.info(`Approval recorded from ${userId}; ${state.getApprovers().length}/${state.minimumCount}`);
         try {
-          await slack.updateApprovalReply(approvalMessageTs, {
-            blocks: renderApprovalReply(
-              buildReplyState(state, approveActionId, rejectActionId),
-            ),
-          });
+          await slack.updateApprovalReply(
+            approvalMessageTs,
+            mergeUpdate({
+              blocks: renderApprovalReply(
+                buildReplyState(state, approveActionId, rejectActionId),
+              ),
+            }),
+          );
         } catch (e) {
           logger.error(e as Error);
         }
@@ -112,7 +128,7 @@ export function registerHandlers(deps: HandlersDeps): void {
         ? successPayload
         : { blocks: renderFinalStatus("approved", state.getApprovers()) };
       try {
-        await slack.updateApprovalReply(approvalMessageTs, finalPayload);
+        await slack.updateApprovalReply(approvalMessageTs, mergeUpdate(finalPayload));
       } catch (e) {
         logger.error(e as Error);
       }
@@ -150,11 +166,14 @@ export function registerHandlers(deps: HandlersDeps): void {
       if (result === "remaining") {
         core.info(`Rejection recorded from ${userId}; ${state.getRejecters().length}/${state.minimumRejectCount}`);
         try {
-          await slack.updateApprovalReply(approvalMessageTs, {
-            blocks: renderApprovalReply(
-              buildReplyState(state, approveActionId, rejectActionId),
-            ),
-          });
+          await slack.updateApprovalReply(
+            approvalMessageTs,
+            mergeUpdate({
+              blocks: renderApprovalReply(
+                buildReplyState(state, approveActionId, rejectActionId),
+              ),
+            }),
+          );
         } catch (e) {
           logger.error(e as Error);
         }
@@ -167,7 +186,7 @@ export function registerHandlers(deps: HandlersDeps): void {
         ? failPayload
         : { blocks: renderFinalStatus("rejected", state.getApprovers(), userId) };
       try {
-        await slack.updateApprovalReply(approvalMessageTs, finalPayload);
+        await slack.updateApprovalReply(approvalMessageTs, mergeUpdate(finalPayload));
       } catch (e) {
         logger.error(e as Error);
       }

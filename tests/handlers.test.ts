@@ -202,6 +202,49 @@ describe("registerHandlers", () => {
     expect(onTerminal).toHaveBeenCalledTimes(1);
   });
 
+  it("baseBlocks: approve remaining update prepends base blocks", async () => {
+    const baseBlocks = [{ type: "section", text: { type: "mrkdwn", text: "BASE" } }];
+    const { app, deps } = makeDeps({ baseBlocks, baseText: "base txt" });
+    registerHandlers(deps);
+    await app.actions["slack-approval-approve"](makeBoltArgs("u1", "approve-id"));
+    const upd = (deps.slack as jest.Mocked<SlackClient>).updateApprovalReply;
+    expect(upd).toHaveBeenCalledTimes(1);
+    const [, payload] = upd.mock.calls[0];
+    expect(payload.text).toBe("base txt");
+    expect((payload.blocks as any[])[0]).toEqual(baseBlocks[0]);
+    expect((payload.blocks as any[]).length).toBeGreaterThan(1);
+  });
+
+  it("baseBlocks: terminal approval update keeps base blocks", async () => {
+    const baseBlocks = [{ type: "header", text: { type: "plain_text", text: "B" } }];
+    const { app, deps } = makeDeps({
+      state: new ApprovalState(["u1"], 1),
+      baseBlocks,
+    });
+    registerHandlers(deps);
+    await app.actions["slack-approval-approve"](makeBoltArgs("u1", "approve-id"));
+    const upd = (deps.slack as jest.Mocked<SlackClient>).updateApprovalReply;
+    const [, payload] = upd.mock.calls[0];
+    expect((payload.blocks as any[])[0]).toEqual(baseBlocks[0]);
+  });
+
+  it("baseBlocks: reject terminal with custom failPayload still includes base blocks", async () => {
+    const baseBlocks = [{ type: "section", text: { type: "mrkdwn", text: "B" } }];
+    const { app, deps } = makeDeps({
+      baseBlocks,
+      failPayload: { text: "no", blocks: [{ type: "section", text: { type: "mrkdwn", text: "X" } }] },
+    });
+    registerHandlers(deps);
+    await app.actions["slack-approval-reject"](makeBoltArgs("u1", "reject-id"));
+    const upd = (deps.slack as jest.Mocked<SlackClient>).updateApprovalReply;
+    const [, payload] = upd.mock.calls[0];
+    expect(payload.text).toBe("no");
+    expect((payload.blocks as any[])[0]).toEqual(baseBlocks[0]);
+    expect((payload.blocks as any[]).slice(1)).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "X" } },
+    ]);
+  });
+
   it("reject: action.value mismatch is ignored", async () => {
     const { app, deps, onTerminal } = makeDeps();
     registerHandlers(deps);

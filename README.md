@@ -2,10 +2,10 @@
 
 GitHub Action that gates a workflow on Slack approval. Two modes:
 
-- **Threaded**: pass `base-message-ts` and the action posts the approval reply in that message's thread. No main message is posted or updated.
-- **Standalone**: omit `base-message-ts` and the action posts `base-message-payload` (or a default GitHub-context block) as the main message, then posts the approval reply in its thread.
+- **Threaded**: pass `base-message-ts` and the action posts the approval reply in that message's thread. The pre-existing main message is never modified; state is reflected on the reply.
+- **Standalone**: omit `base-message-ts` and the action posts a single message combining `base-message-payload` (or a default GitHub-context block) with the approval prompt, then updates that same message in place as state changes. No thread reply is created.
 
-The main message is **never** updated after creation. All approval state (in-progress, approved, rejected, canceled, timed-out) is reflected on the approval reply itself.
+In both modes the message carrying the buttons is the one updated as approvals/rejections come in (in-progress, approved, rejected, canceled, timed-out). In standalone, that's the main message itself; in threaded, it's the reply.
 
 ## Slack app setup
 
@@ -62,7 +62,7 @@ Create a Slack App in your workspace with this manifest:
 | Output | Description |
 |--------|-------------|
 | `main-message-ts` | Main message ts. In threaded mode, equals the input. |
-| `approval-message-ts` | Approval reply ts. |
+| `approval-message-ts` | Ts of the message that carries the buttons and gets updated. Equals `main-message-ts` in standalone mode; the thread reply ts in threaded mode. |
 | `result` | `approved`, `rejected`, `canceled`, or `timed-out`. |
 | `approvers-json` | JSON array of user IDs who approved. |
 | `approvals-json` | JSON array of `{user, ts}` records (`ts` = epoch milliseconds). |

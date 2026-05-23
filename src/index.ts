@@ -38,16 +38,6 @@ async function main(): Promise<void> {
   const web = new WebClient(config.slackBotToken);
   const slack = new SlackClient(web, config.channelId);
 
-  let mainMessageTs: string;
-  if (config.baseMessageTs) {
-    mainMessageTs = config.baseMessageTs;
-  } else {
-    const payload = hasPayload(config.baseMessagePayload)
-      ? config.baseMessagePayload
-      : (defaultMainPayload(ghCtx) as Record<string, unknown>);
-    mainMessageTs = await slack.postMain(payload);
-  }
-
   const state = new ApprovalState(
     config.approvers,
     config.minimumApprovalCount,
@@ -60,10 +50,31 @@ async function main(): Promise<void> {
     approveActionId,
     rejectActionId,
   });
-  const approvalMessageTs = await slack.postApprovalReply(
-    mainMessageTs,
-    initialBlocks,
-  );
+
+  let mainMessageTs: string;
+  let approvalMessageTs: string;
+  let baseBlocks: unknown[] = [];
+  let baseText: string | undefined;
+
+  if (config.baseMessageTs) {
+    mainMessageTs = config.baseMessageTs;
+    approvalMessageTs = await slack.postApprovalReply(
+      mainMessageTs,
+      initialBlocks,
+    );
+  } else {
+    const basePayload: MessagePayload = hasPayload(config.baseMessagePayload)
+      ? (config.baseMessagePayload as MessagePayload)
+      : defaultMainPayload(ghCtx);
+    baseBlocks = Array.isArray(basePayload.blocks) ? basePayload.blocks : [];
+    baseText = typeof basePayload.text === "string" ? basePayload.text : undefined;
+    const combined: Record<string, unknown> = {
+      ...(baseText ? { text: baseText } : {}),
+      blocks: [...baseBlocks, ...initialBlocks],
+    };
+    mainMessageTs = await slack.postMain(combined);
+    approvalMessageTs = mainMessageTs;
+  }
 
   core.setOutput("main-message-ts", mainMessageTs);
   core.setOutput("approval-message-ts", approvalMessageTs);
@@ -107,6 +118,8 @@ async function main(): Promise<void> {
     failPayload: config.failMessagePayload as MessagePayload,
     preventSelfApproval: config.preventSelfApproval,
     selfApprovalSlackId: config.selfApprovalSlackId,
+    baseBlocks,
+    baseText,
     onTerminal: async (outcome) => {
       if (shuttingDown) return;
       shuttingDown = true;
@@ -115,14 +128,22 @@ async function main(): Promise<void> {
     },
   });
 
+  const mergeForUpdate = (statusPayload: MessagePayload): MessagePayload => {
+    const statusBlocks = Array.isArray(statusPayload.blocks) ? statusPayload.blocks : [];
+    return {
+      text: statusPayload.text ?? baseText,
+      blocks: [...baseBlocks, ...statusBlocks],
+    };
+  };
+
   const onCancel = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     try {
-      const payload = hasPayload(config.failMessagePayload)
+      const status: MessagePayload = hasPayload(config.failMessagePayload)
         ? (config.failMessagePayload as MessagePayload)
         : { blocks: renderFinalStatus("canceled", state.getApprovers()) };
-      await slack.updateApprovalReply(approvalMessageTs, payload);
+      await slack.updateApprovalReply(approvalMessageTs, mergeForUpdate(status));
     } catch (e) {
       core.warning(`Cancel update failed: ${(e as Error).message}`);
     }
@@ -136,10 +157,10 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     try {
-      const payload = hasPayload(config.failMessagePayload)
+      const status: MessagePayload = hasPayload(config.failMessagePayload)
         ? (config.failMessagePayload as MessagePayload)
         : { blocks: renderFinalStatus("timed-out", state.getApprovers()) };
-      await slack.updateApprovalReply(approvalMessageTs, payload);
+      await slack.updateApprovalReply(approvalMessageTs, mergeForUpdate(status));
     } catch (e) {
       core.warning(`Timeout update failed: ${(e as Error).message}`);
     }
@@ -154,10 +175,13 @@ async function main(): Promise<void> {
     if (!shuttingDown) {
       shuttingDown = true;
       try {
-        await slack.updateApprovalReply(approvalMessageTs, {
-          blocks: renderFinalStatus("canceled", state.getApprovers()),
-          text: "Approval listener failed to start; run canceled.",
-        });
+        await slack.updateApprovalReply(
+          approvalMessageTs,
+          mergeForUpdate({
+            blocks: renderFinalStatus("canceled", state.getApprovers()),
+            text: "Approval listener failed to start; run canceled.",
+          }),
+        );
       } catch (updErr) {
         core.warning(`Cleanup update failed: ${(updErr as Error).message}`);
       }

@@ -63,7 +63,9 @@ outputs:
   main-message-ts:
     description: Timestamp of the main message (input ts in threaded mode).
   approval-message-ts:
-    description: Timestamp of the approval thread reply.
+    description: |
+      Timestamp of the message that carries the buttons and gets updated.
+      Equals main-message-ts in standalone mode; the thread reply ts in threaded mode.
   result:
     description: One of approved, rejected, canceled, timed-out.
   approvers-json:
